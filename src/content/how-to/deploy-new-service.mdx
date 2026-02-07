@@ -1,0 +1,232 @@
+import { Steps } from 'nextra/components'
+import { FileTree } from 'nextra/components'
+
+# Deploy A New Service
+<Steps>
+
+## Docker Setup
+Create a Dockerfile in the root of your repo. Below is a sample dockerfile used for the MWSA backend.
+```dockerfile
+# ==========================================
+# 1. NODE BASE SETUP
+# ==========================================
+# Use a lightweight Node 22 image as the foundation for JS services.
+FROM node:22-slim AS base
+# Set up pnpm home directory and add it to the system PATH.
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+# Enable Corepack to manage pnpm versions automatically.
+RUN corepack enable
+
+# ==========================================
+# 2. SHARED NODE BUILD STAGE
+# ==========================================
+FROM base AS build
+# Copy the entire monorepo into the container.
+COPY . /usr/src/mswa
+WORKDIR /usr/src/mswa
+# Install dependencies using a cache mount to speed up subsequent pnpm installs.
+# --frozen-lockfile ensures the build fails if the lockfile is out of sync.
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+# Run the build script (likely using Turborepo) to compile all apps.
+RUN pnpm build
+
+# ==========================================
+# 3. WEB (FRONTEND) SERVICE
+# ==========================================
+# Inherit everything from the 'build' stage.
+FROM build AS web
+WORKDIR /usr/src/mswa/apps/web
+EXPOSE 3000
+# Start the web application.
+CMD [ "pnpm", "start" ]
+
+# ==========================================
+# 4. API (BACKEND) SERVICE
+# ==========================================
+# Inherit everything from the 'build' stage.
+FROM build AS api
+WORKDIR /usr/src/mswa/apps/api
+EXPOSE 3000
+# Start the backend API.
+CMD [ "pnpm", "start" ]
+```
+
+> [!TIP]
+>
+> It's always a good idea to try building the image locally first before pushing it to GitHub Actions. Actions can also be simulated
+locally using [act](https://github.com/nektos/act).
+
+## GitHub Actions Setup
+Create a `build_and_push_{service}.yaml` file for each service you wish to deploy under `.github/workflows`. 
+
+Below is the current workflow used to build docker images for the MSWA backend. An example for the web, API, and worker
+services can be found [here](https://github.com/Mobility-Scooter-Project/mobility-scooter-web-app/tree/main/.github/workflows).
+This workflow will run on push and PR targeting `main` and `dev`.
+
+```yaml
+name: Create and publish a mswa-api image
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+    paths:
+      - apps/api/**
+  pull_request:
+    paths:
+      - apps/api/**
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: api
+
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=raw, value=${{ github.head_ref }}
+            type=ref,event=tag,prefix=v
+            type=semver,pattern={{version}}
+            type=sha
+            ${{ github.ref_name == 'main' && 'latest' || '' }}
+
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+        with:
+          context: .
+          target: api
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.IMAGE_NAME}} # Adjusted subject-name
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+```
+
+> [!WARNING]
+>
+> MSWA is a monorepo, and thus uses the apps/\*\*/ folder structure in this workflow. Be sure to adjust your own trigger and build paths accordingly.
+
+If the build is successful, an image will published to the corresponding `target` package in your repository. Double-check that your package is public
+or check with the cluster admin to see if a github token is configured for ArgoCD with package reading permissions.
+
+## ArgoCD Setup
+Create an ArgoCD `Application` and place it in the `deploy` folder in the root of your project. Samples of each application type can be found in the
+[infra repo](https://github.com/Mobility-Scooter-Project/mobility-scooter-infra/tree/main/samples/charts) 
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mswa-api
+  namespace: argocd
+  annotations:
+    kargo.akuity.io/authorized-stage: "msp:mswa-api-deploy"
+spec:
+  destination:
+    namespace: mswa
+    server: 'https://kubernetes.default.svc'
+  project: default
+  sources:
+    - repoURL: 'https://github.com/Mobility-Scooter-Project/mobility-scooter-infra.git'
+      targetRevision: main
+      path: charts/api
+      helm:
+        values: |
+          name: mswa-api
+          replicas: 1
+          image:
+            repository: ghcr.io/mobility-scooter-project/mobility-scooter-web-app/api
+            tag: develop
+            pullPolicy: IfNotPresent
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          
+          ingress:
+            enabled: false
+
+          database:
+            enabled: true
+            name: mswa-prod
+            shouldCreate: true
+            connectionStringEnvVarName: DATABASE_URL
+            shouldMigrate: true
+            migrationCommand: "env && npm run db:migrate"
+            migrationWorkingDir: /usr/src/mswa/apps/api
+
+          kv:
+            enabled: true
+            connectionStringEnvVarName: KV_URL
+
+          queue:
+            enabled: false
+            connectionStringEnvVarName: BROKER_URL
+
+          service:
+            port: 3000
+            targetPort: 3000
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+```
+
+> [!CAUTION]
+>
+> Only one application should have `database.shouldCreate` be set to `true`. Failure to do so may cause intertnal duplicate/routing errors.
+</Steps>
+
+## Reference
+### Sample repo structure
+<FileTree>
+    <FileTree.Folder name=".github">
+        <FileTree.Folder name="workflows" defaultOpen>
+            <FileTree.File name="build_and_push_{service}.yaml" />
+        </FileTree.Folder>
+    </FileTree.Folder>
+    <FileTree.Folder name="deploy">
+        <FileTree.File name="{service}.yaml" />
+    </FileTree.Folder>
+    <FileTree.Folder name="src" />
+    <FileTree.File name="Dockerfile" />
+</FileTree>
+### Advanced Examples
+The [model service](https://github.com/Mobility-Scooter-Project/model-service/tree/main) uses ArgoCD `ApplicationSets` and a more complex workflow
+to build and publish images based on the folder structure and model runtime specified.
