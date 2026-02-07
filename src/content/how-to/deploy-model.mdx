@@ -1,0 +1,84 @@
+import { Steps } from "nextra/components"
+import { FileTree } from "nextra/components"
+
+# Deploy A Model
+<Steps>
+## Folder structure
+Create a new folder under the `model` folder in the [model-service](https://github.com/Mobility-Scooter-Project/model-service/tree/main/src/model). Populate it with the following files:
+
+<FileTree>
+    <FileTree.Folder name="src" defaultOpen>
+        <FileTree.Folder name="model" defaultOpen>
+            <FileTree.Folder name="[your-model-name]" defaultOpen>
+                <FileTree.File name="__init__.py" />
+                <FileTree.File name="requirements.txt" />
+            </FileTree.Folder>
+        </FileTree.Folder>
+    </FileTree.Folder>
+</FileTree>
+
+## Requirments setup
+Add dependencies as you normally would to `requirements.txt`. You can assume there is little to no caching saved between builds.
+
+## Model wrapper
+In `__init__.py` in your new model folder, create a subclass of the `ModelWrapper` class. Here is the YOLO model for example:
+```py
+from .. import ModelWrapper, ModelResult, ModelError
+from ultralytics import YOLO
+
+class yolo(ModelWrapper):
+    def __init__(self):
+        super().__init__("models/yolo11n-pose.pt", output_fields=["boxes", "keypoints", "masks", "names"])
+
+    def load_model(self):
+        self.model = YOLO(self.model_name)
+
+    def predict(self, input, fields = ["boxes","keypoints","masks","names"]):
+        if self.model is None:
+            raise ValueError("Model not loaded. Call load_model() before predict().")
+        
+        res = ModelResult(data=None, error=None)
+        
+        try:
+            outputs = self.model(input)
+            res["data"] = []
+            
+            for output in outputs:
+                result = {}
+                if "boxes" in fields:
+                    result["boxes"] = []
+                    for box in output.boxes:
+                        result["boxes"].append(
+                            {
+                               "data": box.data.tolist() 
+                            }
+                            )
+                print(output.boxes)
+                if "keypoints" in fields:
+                    result["keypoints"] = output.keypoints.data.tolist()
+                if "masks" in fields:
+                    result["masks"] = output.masks
+                if "names" in fields:
+                    result["names"] = output.names
+                
+                res["data"].append(result)
+                
+        except Exception as e:
+            res["error"] = ModelError(message=str(e), status_code=500)
+        finally:
+            return res
+```
+> [!WARNING]
+>
+> Both the model folder and class name you choose must be lowercase, non-space separated in order to work properly with GitHub Actions and Argo/Kargo.
+
+## That's it?
+Yup, once you have merged this into `main` in the model-service repo, you're done! By default, these only run on our cluster and **do not** use GPUs. Ask
+a cluster admin for the k8s DNS address of your new model and you can access it via DevPod.
+
+</Steps>
+
+## Reference
+- This platform was heavily inspired by [Kubeflow](https://www.kubeflow.org/), however was ultimately created due to a dependency of Kubeflow consuming
+*60 GB of RAM* with zero models deployed.
+- While not directly influenced by it, the model-service is very similar to Lyft's [LyftLearn Serving](https://eng.lyft.com/powering-millions-of-real-time-decisions-with-lyftlearn-serving-9bb1f73318dc) platform.

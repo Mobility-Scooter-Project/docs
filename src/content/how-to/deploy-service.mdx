@@ -1,7 +1,7 @@
 import { Steps } from 'nextra/components'
 import { FileTree } from 'nextra/components'
 
-# Deploy A New Service
+# Deploy A Service
 <Steps>
 
 ## Docker Setup
@@ -211,6 +211,13 @@ spec:
 > [!CAUTION]
 >
 > Only one application should have `database.shouldCreate` be set to `true`. Failure to do so may cause intertnal duplicate/routing errors.
+
+Argo will apply your changes whenever you commit to main or develop, depending on how the cluster admin has it configured. Admins can check
+the status of applications via the ArgoCD UI or with the following command:
+```sh
+kubectl describe application your-application-name -n your-application-namespace
+```
+
 </Steps>
 
 ## Reference
