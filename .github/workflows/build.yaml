@@ -38,19 +38,33 @@ jobs:
         with:
           version: 9
 
-      # 2. Setup Node with pnpm caching
+      # 2. Setup Node WITHOUT automatic caching
+      # We removed 'cache: pnpm' here to avoid the workspace error
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "pnpm"
+
+      # 3. Manually Cache pnpm store
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
         with:
           static_site_generator: next
 
-      - name: Restore cache
+      - name: Restore Next.js cache
         uses: actions/cache@v4
         with:
           path: |
@@ -60,11 +74,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
 
-      # 3. Install using pnpm
+      # 4. Install using pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # 4. Build using pnpm
+      # 5. Build using pnpm
       - name: Build with Next.js
         run: pnpm next build
 
