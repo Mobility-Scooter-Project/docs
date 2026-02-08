@@ -22,16 +22,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Build job
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # ⚠️ CRITICAL FIX: Fetch full history so Nextra can generate "Last Updated" dates.
-          # Without this, Nextra fails with "SyntaxError: undefined is not valid JSON"
-          fetch-depth: 0
+          fetch-depth: 0 # Required for Nextra dates
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -41,48 +38,29 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          # We rely on manual cache below to avoid workspace errors
-          
-      - name: Get pnpm store directory
-        shell: bash
-        run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-        with:
-          static_site_generator: next
-
-      - name: Restore Next.js cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            .next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**.[jt]s', '**.[jt]sx') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
+          node-version: "22" # Matches your local version
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build with Next.js
-        run: pnpm next build
+      # ---------------------------------------------------------
+      # DEBUG STEP: Verify file location
+      # This will print your file structure to the logs so we can check it.
+      - name: Debug File Structure
+        run: |
+          echo "Checking for mdx-components..."
+          ls -R src/
+      # ---------------------------------------------------------
+
+      # ⚠️ FIX: Run 'next build' directly to avoid --turbo flag from package.json
+      - name: Build with Next.js (No Turbo)
+        run: npx next build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./out
+          path: ./out # Standard output for 'output: export'
 
-  # Deployment job
   deploy:
     environment:
       name: github-pages
