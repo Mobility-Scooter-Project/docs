@@ -6,6 +6,7 @@ const withNextra = nextra({
 
 export default withNextra({
   output: 'export',
+  basePath: '/docs',
   images: {
     unoptimized: true // mandatory, otherwise won't export
   }
