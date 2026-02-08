@@ -80,8 +80,6 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # ⚠️ When 'output: export' is set in next.config.ts, Next.js writes to 'out' by default.
-          # Even if you have 'distDir: dist', that usually affects the build cache, not the static export.
           path: ./out
 
   # Deployment job
