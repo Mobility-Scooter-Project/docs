@@ -1,29 +1,3 @@
-# Sample workflow for building and deploying a Next.js site to GitHub Pages
-#
-# To get started with Next.js see: https://nextjs.org/docs/getting-started
-#
-name: Deploy Next.js site to Pages
-
-on:
-  # Runs on pushes targeting the default branch
-  push:
-    branches: ["bryan/initial-docs"]
-
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
-
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
-
 jobs:
   # Build job
   build:
@@ -31,21 +5,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # ⚠️ CRITICAL: Fetch full history so Nextra can generate "Last Updated" dates
+          fetch-depth: 0
 
-      # 1. Install pnpm first
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 9
 
-      # 2. Setup Node WITHOUT automatic caching
-      # We removed 'cache: pnpm' here to avoid the workspace error
-      - name: Setup Node
+      - name: Setup Node (Match Local Version)
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22" # Updated to match your local v22.17.0
 
-      # 3. Manually Cache pnpm store
+      # Manual pnpm cache (More reliable than automatic)
       - name: Get pnpm store directory
         shell: bash
         run: |
@@ -69,23 +43,23 @@ jobs:
         with:
           path: |
             .next/cache
-          # Generate a new cache whenever packages or source files change.
           key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**.[jt]s', '**.[jt]sx') }}
           restore-keys: |
             ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
 
-      # 4. Install using pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # 5. Build using pnpm
       - name: Build with Next.js
         run: pnpm next build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./dist
+          # ⚠️ Standard Next.js 'output: export' writes to 'out', NOT 'dist'.
+          # If your next.config.ts forces 'distDir: dist', this might need to be 'dist'.
+          # But usually, it is 'out'.
+          path: ./out
 
   # Deployment job
   deploy:
