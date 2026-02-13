@@ -1,0 +1,29 @@
+# Glossary
+- **abstraction** ~ **virtual** - user-defined container which has *properties* (data) and *methods* (actions)
+- **artifacts** - reminents of some process. Almost always related to build outputs, such as container images.
+- **cloud-native** - a term used to describe tools or software that is designed to run in a virtualized environment of some kind.
+- **cluster** - a group of something, *usually* compute related but not always. 
+- **container registry** - a place where container images are stored, for example GitHub Packages, AWS/Azure/GCP Container Registry, etc.
+- **[Delta](https://docs.ncsa.illinois.edu/systems/delta/en/latest/)** - the HPC platform we use for running batch jobs and interactive GPU development
+- **DevOps** - a loose set of practices focused on "shifting ops left", e.g. giving developers more control and responsiblity over the deployment cycles of their code 
+- **[helm](https://helm.sh/)** - toolkit for packaging k8s manifests into reproducible *templates*, as opposed to Kustomize which embraces the philosophy of
+*patching* resources instead of templating them.
+- **Docker** - a higher level set of tools designed to improve DX built on containerd (containerd images are what actually run on the cluster).
+- **GitOps** - an extension of the DevOps philosophy that focuses on immutable, git-based deployments, where as much state as possible is store in version control.  
+- **high performance compute (HPC)** - a supercomputer in layman's terms; hardware is often organized in such a way that favors performance over availability
+- **image** - a compiled template, primarily for compute resources. A *docker* or *containerd* image might be used at the application level, but higher level
+images exist such as OS images.
+- **[JetStream2 (JS2)](https://docs.jetstream-cloud.org/)** - while not exactly HPC, functions similar to it with a focus on hosting long-running, less compute intensive workloads
+- **Kubernetes (k8s)** - open source container orchestration tool created by Google. Created via OpenStack Magnum, or in the [Horizon UI](https://js2.jetstream-cloud.org/) under "Container Infra"
+- **object storage** - a system component primarily used for storing user-uploaded or other files that do not require random access. Since all paths for an object within Swift are
+known (unlike a filesystem - it wouldn't make sense to search for every GET request), files can be stored and indexed more efficiently.
+- **[OpenStack](https://www.openstack.org/)** - open source cloud hosted on JS2 to provide developer access to underlying resources (compute, storage, networking, etc). Each of these areas are packaged into
+modules, some of which are not supported by JS2.
+- **[Terraform (TF)](https://developer.hashicorp.com/terraform)** - declarative, domain-specific language for representing infrastructure as code (IaaC). 
+The TF cli produces a `tfstate` file that TF treats as the single source of truth. If you were to modify a resource created by via TF in the Horizon UI, any future attempts to 
+modify the TF files used to create that resource will fail until the state is *reconciled* or *refreshed*. The difference between the `tfstate` and the live state of the infra that
+it corresponds to is known as *drift*, and phenomenon which also occurs with k8s manifests.
+- **worker node** - a VM dedicated to doing work. For reliability reasons, many systems such as k8s separate the worker nodes from *scheduler nodes* (aka the control plane), which handle pod placement
+based on current resource consumption and the requirements of the pod.  
+- **volume** ~ **block storage** - a reserved, contiguous block of memory, primarily used for boot volumes and other types of files that need to be accessed randomly and have 
+stronger fault tolerance requirements. 

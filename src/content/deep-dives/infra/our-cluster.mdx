@@ -1,0 +1,140 @@
+# Our K8s Cluster
+We use Kubernetes for nearly all of our application deployment needs. Previously, DevOps was conducted by manually by `ssh`ing into a VM and git cloning code 
+*and environment variables and secrets*, followed by restarting any running services. About six months into to the beginning of the Mobility Scooter Web App
+project, we realized that we would need stronger security and reliability guarantees due to the sensitive nature of patient data. We experimented with [Coolify](https://coolify.io/)
+and scripted setup of [k3s](https://k3s.io/), but found both to be lacking the appropriate reliability guarantees, and ultimately settled on an Ubuntu-based k8s cluster.
+What follows is a description of all the features integrated into our cluster. Note that some of these may be broken or incomplete due to a past incident.
+
+## Core Features
+### ArgoCD
+[Argo](https://argo-cd.readthedocs.io/en/stable/) is the bread and butter of our cluster. While k8s maintains the desired number of replicas for a given deployment, it 
+seldom provides this feature for other resources. Not only does Argo enable us reduce drift, it also allows us to import helm charts and other remote manifests, which is 
+what powers the GitOps push-to-deploy feature. 
+
+It is not without it flaws however. Being git-based can have its drawbacks, including requiring a commit to update image versions when a new release is created. Tools
+such as Kargo attempt to fill the gap, but it's important to recognize that no system is perfect. 
+
+> [!NOTE]
+>
+> Argo is pull based, meaning it is constantly scanning for updates within target repos. To reduce the likelihood of getting rate limited,
+> we supply Argo with a scoped Github access token with read-only permissions.
+
+### cert-manager
+cert-manager is how we provision TLS certificates for public-facing ingresses. In layman's terms, this is how we get browsers to trust `https`, as an invalid TLS
+cert will actually cause most browsers to prevent you from visiting it without consent. Outside of UX, it's also critical for maintaining security by encrypting
+data in transit between the client (your browser) and the server. Internal apps use something similar known as mTLS, but one of the nice features of using a
+backend-for-frontend (BFF) architecture is that the BFF can directly communicate with the API rather than having to deal with another network hop over the public
+internet.
+
+### CloudNative-pg (cnpg)
+[CNPG](https://cloudnative-pg.io/) is an operator for creating and managing Postgres clusters on k8s. One feature that stands out is the ability to create databases
+(e.g. `CREATE DATABASE`, not another instance of the db) using yaml manifests - this enables further customization via helm charts.
+
+The primary instance stores data and write-ahead-log (WAL) in two separate volumes on JS2, meaning if the cluster were to go down data is still persisted.
+
+> [!WARNING]
+>
+> CNPG database instances are less mutable than regular k8s resources. Some properties, such as the size of the storage capacity, are immutable and may require
+> you to resize the volume manually on Horizon.
+
+### DevPod
+[Devpod](https://devpod.sh/) was implemented out of the need for developers with less RAM to run a full instance of the MSWA locally during development. DevPod is entirely client side;
+the only cluster side configuration is to limit access of people using the DevPod kubeconfig. Scripts can be found in the infra repo for generating said configs to
+share with new members during onboarding.
+
+### external-dns
+[external-dns](https://kubernetes-sigs.github.io/external-dns/v0.15.0/) is a tool for automatically provisioning DNS records for `Ingresses`. Below
+is an example of how to use external-dns, cert-manager, and traefik to expose a `Service` via https to the public internet.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-ingress
+  namespace: argocd
+  annotations:
+    # *.cis240470.projects.jetstream-cloud.org is our project's domain
+    external-dns.alpha.kubernetes.io/hostname: argocd.cis240470.projects.jetstream-cloud.org
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+       - argocd.cis240470.projects.jetstream-cloud.org
+      secretName: argocd-tls
+  rules:
+    - host: argocd.cis240470.projects.jetstream-cloud.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 80
+```
+
+### external-secrets
+The [External Secrets Operator (ESO)](https://external-secrets.io/latest/) is an operator for syncing secrets imported from external data sources
+to our cluster as k8s `Secrets`. Secret management is perhaps the most difficult part of running the cluster completely only source, with no external
+secret provider. Most secrets are imported during cluster bootstrap from local `.env` files, something we frown upon, but it proved too expensive to
+run a separate cluster with Infisical.
+
+### Grafana
+[Grafana](https://grafana.com/) is an open source monitoring platform that ships by default in clusters created by OpenStack Magnum. Primarily used
+for monitoring CPU, RAM and storage usage on cluster nodes, it can also be configured to push alarm messages to Discord or other platforms when certain
+conditions are met.
+
+### Kargo
+[Kargo](https://kargo.io/) is the missing piece from Argo; it allows us to monitor container registries and update Argo `Applications` to reflect certain
+image constraints, such as always using the most recent version of a service. Kargo treats build artifacts as their own resources in k8s, and allows you
+to create pipelines called `Stages` that in turn modify Argo apps, among other things.
+
+A Kargo promotion pipeline ships with every one of our custom helm charts, enabling that sweet deploy-on-push functionality.
+
+## Suplemental Features
+The following are either work in progress features, or are upstream dependencies of some of the above features.
+
+### clustersecret
+[ClusterSecret](https://clustersecret.com/) is a simple helm chart for replicating `Secrets` across multiple `Namespaces`. This is notably used to propagate the randomly
+generated password to a connection string for CNPG so it can be accessed by MSWA.
+
+### designate-cert-manager-webhook
+This helm chart provides a single pod that enables [DNS01](https://cert-manager.io/docs/configuration/acme/dns01/) for cert-manager via OpenStack Designate. This is
+the most reliable way to integrate with Let's Encrypt.
+
+### Eraser
+[Eraser](https://eraser-dev.github.io/eraser/docs/) is an operator for managing the storage space on VMs within a cluster. It was integrated after an ICM occurred
+where two 32GB docker images starved the root volumes of all of our nodes, leading to an entire re-roll. It automatically cleans up unused images and temporary files
+periodically.
+
+### Istio
+[Istio](https://istio.io/) was created by Google, and serves as a service mesh, or an interface for monitoring and coordinating networking within a cluster. While not
+currently in use, this would be a great candidate to be implemented alongside the model-service.  
+
+### KEDA
+[KEDA](https://keda.sh/) is an operator for auto-scaling `ReplicaSets` based on some criteria. While not currently in use, it will become useful during beta tests of MSWA
+when we may wish to increase the number of video workers based on the volume of videos in the queue.
+
+> [!TIP]
+>
+> KEDA does not support auto scaling based on HTTP traffic, interestingly. If you are interested in that or other serverless tech for k8s, checkout
+> [Knative](https://knative.dev/), but be warned that it requires at least 60GB of RAM base.
+
+### Redpanda
+The [Redpanda Operator](https://docs.redpanda.com/current/deploy/redpanda/kubernetes/k-deployment-overview/) is a modern replacement for Kafka, a queue service. Its protocol
+is 100% compatible with Kakfa, which is why MSWA uses kakfa.js to interact with the queue.
+
+### SecretGenerator
+[kubernetes-secret-generator](https://github.com/mittwald/kubernetes-secret-generator) is a  helm chart for randomly generating secrets, which is useful for automating parts of cluster bootstrapping, such as generating a password
+for our CNPG cluster.
+
+### Traefik
+[Traefik](https://doc.traefik.io/traefik/) is an incredibly popular proxy for both k8s and standalone applications. It allows routing rules to be defined via annotations on
+ `Ingresses`, and provides TLS termination (https -> http).
+
+### Valkey
+[Valkey](https://valkey.io/) was created during the Redis closed-source debacle, and is similar to Redpanda in the sense that it is a drop in replacement for Redis that supports
+clustering and failover.
